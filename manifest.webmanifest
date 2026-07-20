@@ -1,0 +1,15 @@
+{
+  "name": "Del Sol Head Unit",
+  "short_name": "Del Sol",
+  "description": "Equaliser and settings for the Del Sol custom head unit.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B0D0F",
+  "theme_color": "#0B0D0F",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

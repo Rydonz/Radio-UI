@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0B0D0F"/>
+  <rect x="64" y="64" width="384" height="384" rx="56" fill="none" stroke="#262B31" stroke-width="8"/>
+  <!-- fader bank, mirroring the EQ view -->
+  <g stroke="#3A2E14" stroke-width="14" stroke-linecap="round">
+    <path d="M144 152v208M200 152v208M256 152v208M312 152v208M368 152v208"/>
+  </g>
+  <g fill="#FFB000">
+    <rect x="126" y="286" width="36" height="16" rx="6"/>
+    <rect x="182" y="246" width="36" height="16" rx="6"/>
+    <rect x="238" y="318" width="36" height="16" rx="6"/>
+    <rect x="294" y="352" width="36" height="16" rx="6"/>
+    <rect x="350" y="272" width="36" height="16" rx="6"/>
+  </g>
+</svg>
