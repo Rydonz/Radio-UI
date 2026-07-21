@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.9.0";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.9.1";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
@@ -264,7 +264,10 @@ static inline float biquad_mag2(const Biquad *bq, int i) {
 
 static inline float kill_denormal(float x) {
   union { float f; uint32_t i; } u = {x};
-  if ((u.i & 0x7F800000) == 0) return 0.0f;
+  uint32_t exp = u.i & 0x7F800000;
+  if (exp == 0) return 0.0f;           // zero / denormal — flush to dodge FPU stalls
+  if (exp == 0x7F800000) return 0.0f;  // NaN / Inf — never let it lodge in the filter
+                                       // state, or it regenerates full-scale noise forever
   return x;
 }
 
@@ -282,20 +285,14 @@ float biquad_process(Biquad *bq, float in) {
   return out;
 }
 
-// xorshift32 — fast PRNG for TPDF dither (no stdlib overhead)
-static uint32_t dither_state = 1;
-static inline int32_t dither_sample() {
-  uint32_t a = dither_state;
-  a ^= a << 13; a ^= a >> 17; a ^= a << 5;
-  dither_state = a;
-  uint32_t b = a;
-  b ^= b << 13; b ^= b >> 17; b ^= b << 5;
-  dither_state = b;
-  return (int32_t)(a >> 16) + (int32_t)(b >> 16) - 65535;
-}
-
 static inline int16_t float_to_i16(float x) {
-  float scaled = x * 32767.0f + dither_sample() * (1.0f / 65535.0f);
+  // Guard NaN/Inf: the range checks below use `>`/`<`, which are both false for NaN,
+  // so an unguarded NaN would skip clamping and cast to full-scale garbage — the
+  // "boot static" failure. Force any non-finite sample to silence.
+  // (No dither: at 16-bit its only benefit is on near-silent fades, inaudible in a
+  //  car, while its ±1 LSB noise floor was audible as a constant hiss.)
+  if (!isfinite(x)) return 0;
+  float scaled = x * 32767.0f;
   if (scaled > 32767.0f) scaled = 32767.0f;
   if (scaled < -32768.0f) scaled = -32768.0f;
   return (int16_t)scaled;
@@ -340,11 +337,24 @@ void update_filters() {
     }
     if (m2 > peak2) peak2 = m2;
   }
-  pending_makeup = 1.0f / sqrtf(peak2);
+  float mk = 1.0f / sqrtf(peak2);
+  pending_makeup = (isfinite(mk) && mk > 0.0f) ? mk : 1.0f;  // never publish a bad gain
 }
 
 volatile bool filters_dirty = true;
 volatile bool filters_ready = false;
+volatile bool audio_reset_pending = false;  // set on BT connect → callback flushes stale DSP state
+
+// zero every biquad's delay line — clears any stuck value (incl. a NaN) and avoids a
+// pop from stale filter tails when a new stream starts
+void zero_filter_states() {
+  Biquad *bqs[4] = {&bass_L, &bass_R, &treble_L, &treble_R};
+  for (int i = 0; i < 4; i++) bqs[i]->x1 = bqs[i]->x2 = bqs[i]->y1 = bqs[i]->y2 = 0.0f;
+  for (int b = 0; b < EQ_BANDS; b++) {
+    eq_L[b].x1 = eq_L[b].x2 = eq_L[b].y1 = eq_L[b].y2 = 0.0f;
+    eq_R[b].x1 = eq_R[b].x2 = eq_R[b].y1 = eq_R[b].y2 = 0.0f;
+  }
+}
 
 // DSP cost as a percentage of realtime, reported over BLE — there's no USB port fitted,
 // so this is the only way to see whether the EQ is keeping up
@@ -613,6 +623,7 @@ void connection_state_cb(esp_a2d_connection_state_t state, void *ptr) {
     i2s_zero_dma_buffer(I2S_NUM_1);
     i2s_start(I2S_NUM_0);
     i2s_start(I2S_NUM_1);
+    audio_reset_pending = true;   // fresh stream: clear any stale/garbage DSP state
     bt_connected = true;
     if (settings_values[SET_AUTOPLAY]) {
       is_paused = false;
@@ -670,7 +681,9 @@ void audio_data_callback(const uint8_t *data, uint32_t length) {
     filters_ready = false;
   }
 
-  float target_vol = volume * volume * volume * 0.6f * eq_makeup;
+  float mk = eq_makeup;
+  if (!isfinite(mk) || mk <= 0.0f) mk = 1.0f;   // defend against a torn/bad makeup value
+  float target_vol = volume * volume * volume * 0.6f * mk;
   float fv = fade_val;
   float bv = balance_val;
   float sw = stereo_width;
@@ -684,6 +697,14 @@ void audio_data_callback(const uint8_t *data, uint32_t length) {
   static float s_vol = 0.0f, s_front = 1.0f, s_rear = 1.0f;
   static float s_left = 1.0f, s_right = 1.0f;
   const float GAIN_SMOOTH = 0.007f;
+
+  // fresh stream, or a stuck NaN that would otherwise persist across callbacks: flush the
+  // smoothing state and the filter delay lines so audio starts clean and self-heals.
+  if (audio_reset_pending || !isfinite(s_vol)) {
+    audio_reset_pending = false;
+    s_vol = 0.0f; s_front = 1.0f; s_rear = 1.0f; s_left = 1.0f; s_right = 1.0f;
+    zero_filter_states();
+  }
 
   int16_t buf_front[DMA_BUF_LEN * 2];
   int16_t buf_rear[DMA_BUF_LEN * 2];
