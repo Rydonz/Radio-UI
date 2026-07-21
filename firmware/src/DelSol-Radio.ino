@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.9.3";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.9.4";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
@@ -1082,23 +1082,30 @@ void exit_settings() {
 // --- Button Handling ---
 
 void process_buttons() {
-  // standby: volume knob at zero detent leaves PIN_MUTE HIGH (switch opens at
-  // zero, pullup wins). On entry: pause BT and blank the display. On exit:
-  // wake the display and resume playback.
-  bool mute_now = (digitalRead(PIN_MUTE) == HIGH);
-  if (mute_now != last_mute_state) {
-    last_mute_state = mute_now;
-    if (mute_now) {
-      if (bt_connected) a2dp_sink.pause();
-      oled.setPowerSave(1);
-    } else {
-      oled.setPowerSave(0);
-      if (bt_connected) a2dp_sink.play();
-      display_dirty = true;
-    }
+  // A live A2DP stream couples noise into the analog output even at digital silence, so
+  // the only real cure for the idle static is to STOP the stream. Two silent states do
+  // that by pausing the phone (which is why the detent has always sounded clean — it
+  // pauses, the zeros were incidental):
+  //   - physical detent (PIN_MUTE HIGH): full standby, also blanks the display
+  //   - volume at 0%: pause the stream, but keep the display on and buttons live
+  bool detent = (digitalRead(PIN_MUTE) == HIGH);
+  bool standby = detent || (pot_vol.output == 0);
+
+  if (standby != last_mute_state) {
+    last_mute_state = standby;
+    if (bt_connected) { if (standby) a2dp_sink.pause(); else a2dp_sink.play(); }
   }
-  is_muted = mute_now;
-  if (is_muted) return;
+
+  // blank the display only in full standby (the physical detent), not at 0% volume
+  static bool last_detent = false;
+  if (detent != last_detent) {
+    last_detent = detent;
+    oled.setPowerSave(detent ? 1 : 0);
+    if (!detent) display_dirty = true;
+  }
+
+  is_muted = detent;    // audio/display "muted" state follows the physical detent only
+  if (detent) return;   // full standby: skip button handling
 
   bool play_state = digitalRead(PIN_PLAY);
   bool next_state = digitalRead(PIN_NEXT);
