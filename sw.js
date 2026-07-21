@@ -1,5 +1,5 @@
 /* Cache-first so the app opens in the car with no signal. Bump CACHE on release. */
-const CACHE = "delsol-v7";
+const CACHE = "delsol-v8";
 const ASSETS = [
   "./index.html",
   "./manifest.webmanifest",
@@ -30,16 +30,32 @@ self.addEventListener("activate", e => {
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
 
+  const url = new URL(e.request.url);
+
   // the update manifest must be fresh — network-first, cache only as offline fallback
-  if (new URL(e.request.url).pathname.endsWith("/firmware.json")) {
+  if (url.pathname.endsWith("/firmware.json")) {
     e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
     return;
   }
 
+  // app shell (page navigations + index.html) — network-first, so a new deploy shows
+  // up on the next online launch instead of being pinned to a stale cached copy.
+  // Falls back to cache when offline (in the car).
+  if (e.request.mode === "navigate" || url.pathname.endsWith("/index.html") || url.pathname === "/Radio-UI/") {
+    e.respondWith(
+      fetch(e.request).then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put("./index.html", copy));
+        return res;
+      }).catch(() => caches.match("./index.html"))
+    );
+    return;
+  }
+
+  // everything else (fonts, icons) is versioned/static — cache-first is fine
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
-      // keep the cache warm for same-origin assets, ignore opaque/cross-origin
-      if (res.ok && new URL(e.request.url).origin === location.origin) {
+      if (res.ok && url.origin === location.origin) {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
       }
