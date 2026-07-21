@@ -17,8 +17,8 @@ antenna the way Wi-Fi would.
 
 ## Install
 
-Open the Pages URL in Chrome, then **Add to Home screen**. A service worker caches it, so
-it opens offline in the car. Tap **Connect** and pick the radio.
+Open <https://rydonz.github.io/Radio-UI/> in Chrome, then **Add to Home screen**. A service
+worker caches it, so it opens offline in the car. Tap **Connect** and pick the radio.
 
 Seamless reconnect (no device picker each launch) needs this flag enabled once on the phone:
 `chrome://flags/#enable-web-bluetooth-new-permissions-backend`.

@@ -1,10 +1,11 @@
 /* Cache-first so the app opens in the car with no signal. Bump CACHE on release. */
-const CACHE = "delsol-v1";
+const CACHE = "delsol-v2";
 const ASSETS = [
   "./index.html",
   "./manifest.webmanifest",
-  "./icon.svg",
-  "./icon-maskable.svg",
+  "./App-Icon.png",
+  "./icon-192.png",
+  "./icon-maskable.png",
 ];
 
 self.addEventListener("install", e => {
