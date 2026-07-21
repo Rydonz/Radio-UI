@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.9.4";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.9.5";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
@@ -285,14 +285,23 @@ float biquad_process(Biquad *bq, float in) {
   return out;
 }
 
+// xorshift32 — fast PRNG for TPDF dither (no stdlib overhead)
+static uint32_t dither_state = 1;
+static inline int32_t dither_sample() {
+  uint32_t a = dither_state;
+  a ^= a << 13; a ^= a >> 17; a ^= a << 5;
+  dither_state = a;
+  uint32_t b = a;
+  b ^= b << 13; b ^= b >> 17; b ^= b << 5;
+  dither_state = b;
+  return (int32_t)(a >> 16) + (int32_t)(b >> 16) - 65535;
+}
+
 static inline int16_t float_to_i16(float x) {
-  // Guard NaN/Inf: the range checks below use `>`/`<`, which are both false for NaN,
-  // so an unguarded NaN would skip clamping and cast to full-scale garbage — the
-  // "boot static" failure. Force any non-finite sample to silence.
-  // (No dither: at 16-bit its only benefit is on near-silent fades, inaudible in a
-  //  car, while its ±1 LSB noise floor was audible as a constant hiss.)
+  // null/NaN guard — an unguarded NaN skips the range checks below (both false for NaN)
+  // and casts to full-scale garbage: the boot-static blast. This is the one fix we keep.
   if (!isfinite(x)) return 0;
-  float scaled = x * 32767.0f;
+  float scaled = x * 32767.0f + dither_sample() * (1.0f / 65535.0f);
   if (scaled > 32767.0f) scaled = 32767.0f;
   if (scaled < -32768.0f) scaled = -32768.0f;
   return (int16_t)scaled;
@@ -612,9 +621,7 @@ void init_i2s(i2s_port_t port, int bck, int lrck, int dout) {
   if (err != ESP_OK) Serial.printf("i2s_set_pin(%d) failed: %d\n", port, err);
 
   i2s_zero_dma_buffer(port);
-  i2s_start(port);   // keep the DAC clocked with digital silence from boot. An unclocked
-                     // PCM5102 floats and the amps blast it as static; with tx_desc_auto_clear
-                     // the DMA streams zeros on its own until the audio callback feeds real data.
+  i2s_stop(port);
 }
 
 // --- Connection State Callback ---
@@ -644,9 +651,9 @@ void connection_state_cb(esp_a2d_connection_state_t state, void *ptr) {
     metadata_changed = true;
     i2s_zero_dma_buffer(I2S_NUM_0);
     i2s_zero_dma_buffer(I2S_NUM_1);
-    // keep I2S running (clocked with silence) rather than stopping — a stopped, unclocked
-    // DAC is exactly the noisy state we're trying to avoid
-    Serial.println("BT disconnected — silent");
+    i2s_stop(I2S_NUM_0);
+    i2s_stop(I2S_NUM_1);
+    Serial.println("BT disconnected — muted");
   }
 }
 
@@ -655,11 +662,7 @@ void connection_state_cb(esp_a2d_connection_state_t state, void *ptr) {
 void audio_data_callback(const uint8_t *data, uint32_t length) {
   const TickType_t I2S_TIMEOUT = pdMS_TO_TICKS(50);
 
-  // At 0% volume, emit exact digital zeros instead of music × ~0. The volume smoothing
-  // only approaches zero asymptotically, so without this the DAC keeps converting a
-  // micro-level live signal and its idle noise floor stays audible — noticeably louder
-  // than the mute detent. Feeding true silence lets the DAC go quiet, same as mute.
-  if (!bt_connected || is_paused || is_muted || volume < 0.005f) {
+  if (!bt_connected || is_paused || is_muted) {
     int16_t silence[DMA_BUF_LEN * 2] = {};
     size_t w;
     for (uint32_t off = 0; off < length / 4; off += DMA_BUF_LEN) {
@@ -1082,30 +1085,23 @@ void exit_settings() {
 // --- Button Handling ---
 
 void process_buttons() {
-  // A live A2DP stream couples noise into the analog output even at digital silence, so
-  // the only real cure for the idle static is to STOP the stream. Two silent states do
-  // that by pausing the phone (which is why the detent has always sounded clean — it
-  // pauses, the zeros were incidental):
-  //   - physical detent (PIN_MUTE HIGH): full standby, also blanks the display
-  //   - volume at 0%: pause the stream, but keep the display on and buttons live
-  bool detent = (digitalRead(PIN_MUTE) == HIGH);
-  bool standby = detent || (pot_vol.output == 0);
-
-  if (standby != last_mute_state) {
-    last_mute_state = standby;
-    if (bt_connected) { if (standby) a2dp_sink.pause(); else a2dp_sink.play(); }
+  // standby: volume knob at zero detent leaves PIN_MUTE HIGH (switch opens at
+  // zero, pullup wins). On entry: pause BT and blank the display. On exit:
+  // wake the display and resume playback.
+  bool mute_now = (digitalRead(PIN_MUTE) == HIGH);
+  if (mute_now != last_mute_state) {
+    last_mute_state = mute_now;
+    if (mute_now) {
+      if (bt_connected) a2dp_sink.pause();
+      oled.setPowerSave(1);
+    } else {
+      oled.setPowerSave(0);
+      if (bt_connected) a2dp_sink.play();
+      display_dirty = true;
+    }
   }
-
-  // blank the display only in full standby (the physical detent), not at 0% volume
-  static bool last_detent = false;
-  if (detent != last_detent) {
-    last_detent = detent;
-    oled.setPowerSave(detent ? 1 : 0);
-    if (!detent) display_dirty = true;
-  }
-
-  is_muted = detent;    // audio/display "muted" state follows the physical detent only
-  if (detent) return;   // full standby: skip button handling
+  is_muted = mute_now;
+  if (is_muted) return;
 
   bool play_state = digitalRead(PIN_PLAY);
   bool next_state = digitalRead(PIN_NEXT);
@@ -1940,12 +1936,6 @@ void setup() {
   Serial.printf("DelSol Head Unit v%s\n", __version__);
   sscanf(__version__, "%hhu.%hhu.%hhu", &fw_ver[0], &fw_ver[1], &fw_ver[2]);
 
-  // Bring the DACs up first, clocked with silence, so they're never left unclocked —
-  // that idle/floating state is what the amps blast as static (at boot, when idle, and
-  // all through an OTA update, since those paths never fed I2S before).
-  init_i2s(I2S_NUM_0, I2S1_BCK, I2S1_LRCK, I2S1_DOUT);
-  init_i2s(I2S_NUM_1, I2S2_BCK, I2S2_LRCK, I2S2_DOUT);
-
   // failsafe OTA: hold NEXT during power-on to enter OTA mode. NEXT/PREV are a single
   // rocker on the OEM faceplate — you physically can't press both — so recovery is one
   // button. Bypasses all application code, so it works even if the firmware is broken.
@@ -1955,6 +1945,9 @@ void setup() {
     Serial.println("OTA mode: NEXT held at boot");
     enter_ota_mode_early();
   }
+
+  init_i2s(I2S_NUM_0, I2S1_BCK, I2S1_LRCK, I2S1_DOUT);
+  init_i2s(I2S_NUM_1, I2S2_BCK, I2S2_LRCK, I2S2_DOUT);
 
   SPI.begin(18, -1, 23, -1);
   oled.setBusClock(4000000);
