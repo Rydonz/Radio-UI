@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.7.0";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.8.0";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
