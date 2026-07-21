@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.9.1";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.9.2";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
@@ -653,7 +653,11 @@ void connection_state_cb(esp_a2d_connection_state_t state, void *ptr) {
 void audio_data_callback(const uint8_t *data, uint32_t length) {
   const TickType_t I2S_TIMEOUT = pdMS_TO_TICKS(50);
 
-  if (!bt_connected || is_paused || is_muted) {
+  // At 0% volume, emit exact digital zeros instead of music × ~0. The volume smoothing
+  // only approaches zero asymptotically, so without this the DAC keeps converting a
+  // micro-level live signal and its idle noise floor stays audible — noticeably louder
+  // than the mute detent. Feeding true silence lets the DAC go quiet, same as mute.
+  if (!bt_connected || is_paused || is_muted || volume < 0.005f) {
     int16_t silence[DMA_BUF_LEN * 2] = {};
     size_t w;
     for (uint32_t off = 0; off < length / 4; off += DMA_BUF_LEN) {
