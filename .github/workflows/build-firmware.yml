@@ -1,0 +1,66 @@
+name: Build firmware
+
+# Compiles the firmware whenever the source under firmware/ changes, then publishes
+# firmware.bin + firmware.json to the repo root so GitHub Pages serves them and the
+# phone can pull the update. Committing those root files does NOT re-trigger this
+# (the path filter only watches firmware/**), so there's no loop.
+on:
+  push:
+    branches: [main]
+    paths: ['firmware/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-firmware
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            firmware/.pio
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        run: pio run -d firmware
+
+      - name: Publish firmware.bin + firmware.json
+        run: |
+          set -euo pipefail
+          VER=$(grep -oP '__version__\s*=\s*"\K[0-9]+\.[0-9]+\.[0-9]+' firmware/src/DelSol-Radio.ino)
+          echo "Firmware version: $VER"
+          cp firmware/.pio/build/esp32dev/firmware.bin firmware.bin
+          SHORT=$(git rev-parse --short HEAD)
+          cat > firmware.json <<EOF
+          {
+            "version": "$VER",
+            "url": "https://rydonz.github.io/Radio-UI/firmware.bin",
+            "notes": "Automated build ${SHORT}"
+          }
+          EOF
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add firmware.bin firmware.json
+          if git diff --cached --quiet; then
+            echo "No firmware change to publish."
+          else
+            git commit -m "CI: publish firmware v$VER [skip ci]"
+            git push
+          fi

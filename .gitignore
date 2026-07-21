@@ -2,3 +2,5 @@
 _preview.html
 # design-tool source (not needed on the live site)
 Concept/
+# PlatformIO build output for the in-repo firmware project
+firmware/.pio/

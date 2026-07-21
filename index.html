@@ -261,8 +261,8 @@ const BANDS=10, EQ_MAX=12;
 const EQ_FREQS_LBL=['31','62','125','250','500','1k','2k','4k','8k','16k'];
 const BT_NAMES=["DelSol","DelSol Radio","The Ultra Custom Bestest DelSol Head Unit Of All Time Or Something Like That","Honda DelSol VTEC"];
 const SETTINGS_COUNT=24;
-const STATE_LEN=33+SETTINGS_COUNT*2;   // must equal the firmware BleState (static_assert guards it)
-const FW="0.6.0";
+const STATE_LEN=33+SETTINGS_COUNT*2+3;   // must equal the firmware BleState (static_assert guards it)
+const FW="0.7.0";                        // fallback shown before the device reports its own version
 
 // mirrors settings_defs[] in DelSol-Radio.ino — index order is the BLE contract
 const DEFS=[
@@ -402,6 +402,8 @@ function parseState(dv){
   for(let b=0;b<BANDS;b++) S.eq[b]=dv.getInt8(15+b);
   S.dspLoad=dv.getUint16(27,true); S.freeHeap=Math.round(dv.getUint32(29,true)/1024);
   for(let i=0;i<SETTINGS_COUNT;i++) S.sv[i]=dv.getInt16(33+i*2,true);
+  const vo=33+SETTINGS_COUNT*2;   // appended fw_major/minor/patch
+  S.fwVersion=dv.getUint8(vo)+'.'+dv.getUint8(vo+1)+'.'+dv.getUint8(vo+2);
   S.preset=matchPreset(S.eq);
   render();
 }
@@ -445,11 +447,12 @@ async function checkLatest(){
   render();
 }
 function startWebUpdate(){
-  // Future contract: tell the unit to reboot into Wi-Fi, pull firmware.json's .bin and flash.
-  // Harmless on current firmware (unknown op is ignored), so it's safe to wire now.
-  send(OP.WEBUPDATE,0,0);
   S.modal=null; render();
-  toast('Web update needs firmware v0.7+ on the unit');
+  if(demo || !cmdChar){ toast('Connect to the radio first'); return; }
+  // unit reboots into Wi-Fi, pulls firmware.bin from GitHub Pages, flashes, restarts.
+  // BLE drops during the update — the app shows DISCONNECTED then reconnects on the new version.
+  send(OP.WEBUPDATE,0,0);
+  toast('Updating — the radio will restart, then reconnect');
 }
 function chooseOta(){
   S.modal=null; render();
@@ -749,7 +752,8 @@ function buildSetup(){
   SETUP_GROUPS.forEach(g=>{ const sec=el('div'); sec.style.marginTop='18px';
     const t=el('div','secttl'); t.textContent=g.title; sec.appendChild(t);
     g.items.forEach(i=>buildControl(i,sec)); root.appendChild(sec); });
-  const fw=el('div','fwline'); fw.textContent='DELSOL RADIO · FIRMWARE v'+FW; root.appendChild(fw);
+  const fw=el('div','fwline'); root.appendChild(fw);
+  updaters.push(()=>fw.textContent='DELSOL RADIO · FIRMWARE v'+S.fwVersion);
 }
 
 /* close any open menu when tapping elsewhere */
