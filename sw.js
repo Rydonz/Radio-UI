@@ -1,11 +1,18 @@
 /* Cache-first so the app opens in the car with no signal. Bump CACHE on release. */
-const CACHE = "delsol-v4";
+const CACHE = "delsol-v6";
 const ASSETS = [
   "./index.html",
   "./manifest.webmanifest",
   "./App-Icon.png",
   "./icon-192.png",
   "./icon-maskable.png",
+  "./fonts/barlow-400.woff2",
+  "./fonts/barlow-500.woff2",
+  "./fonts/barlow-600.woff2",
+  "./fonts/barlow-700.woff2",
+  "./fonts/dm-mono-400.woff2",
+  "./fonts/dm-mono-500.woff2",
+  "./fonts/share-tech-mono-400.woff2",
 ];
 
 self.addEventListener("install", e => {
@@ -22,6 +29,13 @@ self.addEventListener("activate", e => {
 
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
+
+  // the update manifest must be fresh — network-first, cache only as offline fallback
+  if (new URL(e.request.url).pathname.endsWith("/firmware.json")) {
+    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+    return;
+  }
+
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
       // keep the cache warm for same-origin assets, ignore opaque/cross-origin
