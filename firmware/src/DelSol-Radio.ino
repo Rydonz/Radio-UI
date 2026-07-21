@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.9.2";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.9.3";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
@@ -612,7 +612,9 @@ void init_i2s(i2s_port_t port, int bck, int lrck, int dout) {
   if (err != ESP_OK) Serial.printf("i2s_set_pin(%d) failed: %d\n", port, err);
 
   i2s_zero_dma_buffer(port);
-  i2s_stop(port);
+  i2s_start(port);   // keep the DAC clocked with digital silence from boot. An unclocked
+                     // PCM5102 floats and the amps blast it as static; with tx_desc_auto_clear
+                     // the DMA streams zeros on its own until the audio callback feeds real data.
 }
 
 // --- Connection State Callback ---
@@ -642,9 +644,9 @@ void connection_state_cb(esp_a2d_connection_state_t state, void *ptr) {
     metadata_changed = true;
     i2s_zero_dma_buffer(I2S_NUM_0);
     i2s_zero_dma_buffer(I2S_NUM_1);
-    i2s_stop(I2S_NUM_0);
-    i2s_stop(I2S_NUM_1);
-    Serial.println("BT disconnected — muted");
+    // keep I2S running (clocked with silence) rather than stopping — a stopped, unclocked
+    // DAC is exactly the noisy state we're trying to avoid
+    Serial.println("BT disconnected — silent");
   }
 }
 
@@ -1931,6 +1933,12 @@ void setup() {
   Serial.printf("DelSol Head Unit v%s\n", __version__);
   sscanf(__version__, "%hhu.%hhu.%hhu", &fw_ver[0], &fw_ver[1], &fw_ver[2]);
 
+  // Bring the DACs up first, clocked with silence, so they're never left unclocked —
+  // that idle/floating state is what the amps blast as static (at boot, when idle, and
+  // all through an OTA update, since those paths never fed I2S before).
+  init_i2s(I2S_NUM_0, I2S1_BCK, I2S1_LRCK, I2S1_DOUT);
+  init_i2s(I2S_NUM_1, I2S2_BCK, I2S2_LRCK, I2S2_DOUT);
+
   // failsafe OTA: hold NEXT during power-on to enter OTA mode. NEXT/PREV are a single
   // rocker on the OEM faceplate — you physically can't press both — so recovery is one
   // button. Bypasses all application code, so it works even if the firmware is broken.
@@ -1940,9 +1948,6 @@ void setup() {
     Serial.println("OTA mode: NEXT held at boot");
     enter_ota_mode_early();
   }
-
-  init_i2s(I2S_NUM_0, I2S1_BCK, I2S1_LRCK, I2S1_DOUT);
-  init_i2s(I2S_NUM_1, I2S2_BCK, I2S2_LRCK, I2S2_DOUT);
 
   SPI.begin(18, -1, 23, -1);
   oled.setBusClock(4000000);
