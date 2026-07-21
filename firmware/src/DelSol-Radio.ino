@@ -15,7 +15,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-const char *__version__ = "0.8.0";   // CI greps this literal to stamp firmware.json
+const char *__version__ = "0.9.0";   // CI greps this literal to stamp firmware.json
 uint8_t fw_ver[3] = {0, 0, 0};        // parsed from __version__ at boot, reported over BLE
 
 // where the unit pulls new firmware from when the phone triggers a web update —
@@ -1906,13 +1906,13 @@ void setup() {
   Serial.printf("DelSol Head Unit v%s\n", __version__);
   sscanf(__version__, "%hhu.%hhu.%hhu", &fw_ver[0], &fw_ver[1], &fw_ver[2]);
 
-  // failsafe OTA: hold PREV+NEXT during power-on to enter OTA mode
-  // bypasses all application code — works even if firmware is broken
-  pinMode(PIN_PREV, INPUT_PULLUP);
+  // failsafe OTA: hold NEXT during power-on to enter OTA mode. NEXT/PREV are a single
+  // rocker on the OEM faceplate — you physically can't press both — so recovery is one
+  // button. Bypasses all application code, so it works even if the firmware is broken.
   pinMode(PIN_NEXT, INPUT_PULLUP);
   delay(50);
-  if (digitalRead(PIN_PREV) == LOW && digitalRead(PIN_NEXT) == LOW) {
-    Serial.println("OTA mode: PREV+NEXT held at boot");
+  if (digitalRead(PIN_NEXT) == LOW) {
+    Serial.println("OTA mode: NEXT held at boot");
     enter_ota_mode_early();
   }
 
