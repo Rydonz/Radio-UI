@@ -419,7 +419,14 @@ function parseMeta(dv){
 /* ───────── mutations ───────── */
 function setEq(i,v){ v=Math.max(-EQ_MAX,Math.min(EQ_MAX,v)); S.eq[i]=v; S.preset=matchPreset(S.eq); queueEq(i,v); render(); }
 function setPreset(k){ S.eq=PRESETS[k].slice(); S.preset=k; S.openMenu=null; S.eq.forEach((v,i)=>queueEq(i,v)); send(OP.COMMIT,0,0); render(); }
-function setSv(i,v){ const d=DEFS[i]; v=Math.max(d.min,Math.min(d.max,v)); S.sv[i]=v; queueSetting(i,v); render(); }
+function setSv(i,v){
+  const d=DEFS[i];
+  // list settings have no min/max — clamping them against undefined yields NaN, which
+  // serialises to 0 over BLE and forces the top option. Clamp by option count instead.
+  if(d.t==='list') v=Math.max(0,Math.min(d.opts.length-1,v));
+  else v=Math.max(d.min,Math.min(d.max,v));
+  S.sv[i]=v; queueSetting(i,v); render();
+}
 function toggleSetting(i){ const nv=S.sv[i]?0:1; S.sv[i]=nv; send(OP.SETTING,i,nv); render(); }
 function stepSetting(i,dir){ const d=DEFS[i]; setSv(i,S.sv[i]+dir*d.step); }
 function chooseList(i,k){ S.openMenu=null; setSv(i,k); }

@@ -1,5 +1,5 @@
 /* Cache-first so the app opens in the car with no signal. Bump CACHE on release. */
-const CACHE = "delsol-v8";
+const CACHE = "delsol-v9";
 const ASSETS = [
   "./index.html",
   "./manifest.webmanifest",
