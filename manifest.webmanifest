@@ -9,8 +9,7 @@
   "background_color": "#0B0D0F",
   "theme_color": "#0B0D0F",
   "icons": [
-    { "src": "App-Icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon-maskable.png", "sizes": "1024x1024", "type": "image/png", "purpose": "maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-maskable.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any maskable" }
   ]
 }
